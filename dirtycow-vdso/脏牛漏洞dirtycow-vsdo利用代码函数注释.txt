@@ -1,0 +1,101 @@
+传统内存数据存储方式 小端模式 0x1234  addr[1-4] 4 3 2 1
+网络字节存储         大端模式 0x1234  addr[1-4] 1 2 3 4
+main()
+	htonl 传统内存数据存储方式 -> 网络字节存储 4字节
+	eg :　htonl(0x1234) -> 0x4321
+
+	htons 传统内存数据存储方式 -> 网络字节存储 2字节
+	eg :  htons(0x12)   -> 0x21
+
+	static int 
+	parse_ip_port(char *str, uint32_t *ip, uint16_t *port) 将str中代表的ip地址和端口存到ip和port中
+	eg parse_ip_port("127.0.0.1",ip,port) -> ip=0x0100007f port=0xd204
+		extern char *
+		strdup(char *s)	将字符串复制到新申请的内存位置
+		eg : char *s = "abc"; char *d = strup(s); -> d = "abc";
+		
+		extern char *
+		strchr(const char *s,char c)	返回c在s中的位置指针
+		eg : d = strchr("abc",'b') -> d = "bc"
+		
+		int 
+		atoi(const char *nptr); 将字符串转化为整型
+		eg : atoi("1234") -> 1234
+		
+		int 
+		inet_aton(const char *string, struct in_addr*addr); 将一个字符串IP地址转换为一个32位的网络序列IP地址。
+		inet_aton("127.0.0.1",ip) -> ip=0x0100007f
+	
+	inet_ntoa 将网络序列IP地址转为字符型IP地址
+	eg : inet_ntoa(0x0100007f,ip) -> ip = "127.0.0.1"
+	
+	ntohs 网络字节存储 -> 传统内存数据存储方式 2字节
+	eg : ntohs(0x21) -> 0x12
+	
+	static void *
+	get_vdso_addr(void) 获取vdso地址
+		unsigned long 
+		getauxval(unsigned long type); retrieve a value from the auxiliary vector
+		AT_SYSINFO_EHDR
+              The address of a page containing the virtual Dynamic Shared
+              Object (vDSO) that the kernel creates in order to provide fast
+              implementations of certain system calls.
+			  
+	static struct prologue *
+	fingerprint_prologue(void *vdso_addr) 通过vdso_addr找到clock_gettime()函数的地址
+	
+	static int 
+	patch_payload(struct prologue *p, uint32_t ip, uint16_t port) 将payload中prologue,ip,port替换成新的
+																	prologue(根据fingerprint_prologue函数得到)
+																	ip(可以通过参数设定)
+																	port(可以通过参数设定)
+																	
+		static int 
+		patch_payload_helper(struct payload_patch *pp)              替换prologue,ip,port的实现函数
+	
+	static int 
+	build_vdso_patch(void *vdso_addr, struct prologue *prologue)
+	填充vdso_patch数组,
+	vdso_patch[0]     						vdso_patch[1]
+	->patch	payload							->patch	buf = "e8 0xxxxx"
+	->copy	原内存数据保存的内存地址		->copy	clock_gettime前prologue->size字节数据保存的内存地址
+	->size	payload_len						->size 	prologue->size
+	->addr	payload将要被复制到的内存地址	->addr 	clock_gettime的地址
+	
+	static int 
+	create_socket(uint16_t port) 设置一个监听socket
+		static int 
+		setsockopt(struct socket *sock,int lvl, int opt, char __user *ov, unsigned int ol);
+		eg : 设置调用close(socket)后,仍可继续重用该socket。调用close(socket)一般不会立即关闭socket，而经历TIME_WAIT的过程。
+				BOOL bReuseaddr = TRUE;
+				setsockopt( s, SOL_SOCKET, SO_REUSEADDR, ( const char* )&bReuseaddr, sizeof( BOOL ) );
+	
+	static int 
+	exploit(struct mem_arg *arg, bool do_patch) 攻击函数
+		static int 
+		exploit_helper(struct mem_arg *arg)     攻击函数的实现部分
+			static void 
+			check(struct mem_arg *arg)			检查是否攻击成功,成功则退出子进程,否则循环等待
+			
+			static void *
+			madviseThread(void *arg_)			干扰线程
+				int 
+				madvise(caddr_t addr, size_t len, int advice);
+				
+			static void *
+			ptrace_thread(void *arg_) 写内存数据
+				clone  开启一个线程
+					debuggee
+						prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) 父进程退出,子进程也退出
+						ptrace(PTRACE_TRACEME, 0, NULL, NULL)     将控制权交给父进程
+				
+				static int 
+				backdoor_vdso(pid_t pid, unsigned int patch_number)
+					static int 
+					ptrace_memcpy(pid_t pid, void *dest, const void *src, size_t n)
+						ptrace(PTRACE_POKETEXT, pid, d, value)  写入一个数据
+						ptrace(PTRACE_PEEKTEXT, pid, d, NULL)   读取一个数据
+				
+				ptrace(PTRACE_CONT, pid, NULL, NULL)			继续执行子进程
+	static int 
+	yeah(struct mem_arg *arg, int s)  等待连接,处理连接后的数据发送与接收,还原原vDSO空间数据
